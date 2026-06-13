@@ -1,0 +1,93 @@
+syntax = "proto3";
+
+package ray.common;
+
+/// Unique identifier for a task.
+message TaskId {
+  bytes id = 1; // 16-byte unique identifier
+}
+
+/// Unique identifier for an actor.
+message ActorId {
+  bytes id = 1;
+}
+
+/// Unique identifier for a worker process.
+message WorkerId {
+  bytes id = 1;
+}
+
+/// Unique identifier for an object stored in the object store.
+message ObjectId {
+  bytes id = 1; // 28-byte object identifier (task_id + return_index)
+}
+
+/// Unique identifier for a node in the cluster.
+message NodeId {
+  bytes id = 1;
+}
+
+/// Unique identifier for a job.
+message JobId {
+  bytes id = 1;
+}
+
+/// Resource specification for tasks and actors.
+message Resources {
+  map<string, double> resource_map = 1;
+  // Common resource keys: "CPU", "GPU", "memory", "object_store_memory"
+}
+
+/// Address of a Raylet or worker process.
+message Address {
+  string ip_address = 1;
+  int32 port = 2;
+  NodeId node_id = 3;
+  WorkerId worker_id = 4;
+}
+
+/// Task execution status.
+enum TaskStatus {
+  TASK_STATUS_UNSPECIFIED = 0;
+  TASK_STATUS_PENDING = 1;
+  TASK_STATUS_SCHEDULED = 2;
+  TASK_STATUS_RUNNING = 3;
+  TASK_STATUS_FINISHED = 4;
+  TASK_STATUS_FAILED = 5;
+  TASK_STATUS_CANCELLED = 6;
+}
+
+/// Actor lifecycle state.
+enum ActorState {
+  ACTOR_STATE_UNSPECIFIED = 0;
+  ACTOR_STATE_PENDING = 1;
+  ACTOR_STATE_ALIVE = 2;
+  ACTOR_STATE_RESTARTING = 3;
+  ACTOR_STATE_DEAD = 4;
+}
+
+/// Specification for creating a task.
+message TaskSpec {
+  TaskId task_id = 1;
+  JobId job_id = 2;
+  string function_name = 3;
+  bytes function_payload = 4;         // Serialized function (pickle/cloudpickle for Python)
+  repeated ObjectId return_ids = 5;   // Object IDs for return values
+  repeated ObjectId dependency_ids = 6; // Object IDs this task depends on
+  Resources required_resources = 7;
+  Address caller_address = 8;
+  int32 max_retries = 9;
+  map<string, string> metadata = 10;
+}
+
+/// Specification for creating an actor.
+message ActorSpec {
+  ActorId actor_id = 1;
+  JobId job_id = 2;
+  string class_name = 3;
+  bytes class_payload = 4;           // Serialized class definition
+  bytes constructor_args = 5;        // Serialized constructor arguments
+  Resources required_resources = 6;
+  int32 max_restarts = 7;
+  map<string, string> metadata = 8;
+}

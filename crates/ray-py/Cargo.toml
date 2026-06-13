@@ -1,0 +1,19 @@
+[package]
+name = "ray-py"
+version.workspace = true
+edition.workspace = true
+
+[lib]
+name = "ray_rust"
+crate-type = ["cdylib"]
+
+[dependencies]
+ray-core = { workspace = true }
+ray-gcs = { workspace = true }
+ray-raylet = { workspace = true }
+ray-object-store = { workspace = true }
+ray-scheduler = { workspace = true }
+pyo3 = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }

@@ -1,0 +1,12 @@
+[package]
+name = "ray-scheduler"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+ray-core = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+async-trait = { workspace = true }
+thiserror = { workspace = true }
+serde = { workspace = true }

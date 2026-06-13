@@ -1,0 +1,147 @@
+syntax = "proto3";
+
+package ray.raylet;
+
+import "common.proto";
+
+// ──────────────────────────────────────────────
+//  Raylet (per-node daemon) Service
+// ──────────────────────────────────────────────
+
+/// Each node runs a Raylet that manages local scheduling,
+/// resource allocation, and worker lifecycle.
+service RayletService {
+  // ── Task management ──
+  rpc SubmitTask(SubmitTaskRequest) returns (SubmitTaskReply);
+  rpc CancelTask(CancelTaskRequest) returns (CancelTaskReply);
+  rpc GetTaskStatus(GetTaskStatusRequest) returns (GetTaskStatusReply);
+
+  // ── Worker management ──
+  rpc RegisterWorker(RegisterWorkerRequest) returns (RegisterWorkerReply);
+  rpc UnregisterWorker(UnregisterWorkerRequest) returns (UnregisterWorkerReply);
+
+  // ── Object location ──
+  rpc WaitForObject(WaitForObjectRequest) returns (WaitForObjectReply);
+  rpc GetObjectLocations(GetObjectLocationsRequest) returns (GetObjectLocationsReply);
+
+  // ── Inter-raylet communication ──
+  rpc TransferObject(TransferObjectRequest) returns (TransferObjectReply);
+  rpc RequestWorkerLease(RequestWorkerLeaseRequest) returns (RequestWorkerLeaseReply);
+  rpc ReleaseWorkerLease(ReleaseWorkerLeaseRequest) returns (ReleaseWorkerLeaseReply);
+}
+
+// ──────────────────────────────────────────────
+//  Task messages
+// ──────────────────────────────────────────────
+
+message SubmitTaskRequest {
+  ray.common.TaskSpec task_spec = 1;
+}
+
+message SubmitTaskReply {
+  bool accepted = 1;
+  string reject_reason = 2;
+}
+
+message CancelTaskRequest {
+  ray.common.TaskId task_id = 1;
+  bool force_kill = 2;
+}
+
+message CancelTaskReply {
+  bool success = 1;
+}
+
+message GetTaskStatusRequest {
+  ray.common.TaskId task_id = 1;
+}
+
+message GetTaskStatusReply {
+  ray.common.TaskStatus status = 1;
+  string error_message = 2;
+}
+
+// ──────────────────────────────────────────────
+//  Worker messages
+// ──────────────────────────────────────────────
+
+message RegisterWorkerRequest {
+  ray.common.WorkerId worker_id = 1;
+  ray.common.Address address = 2;
+  int32 pid = 3;
+  string language = 4; // "python", "java", "cpp", "rust"
+}
+
+message RegisterWorkerReply {
+  bool success = 1;
+  ray.common.NodeId node_id = 2;
+}
+
+message UnregisterWorkerRequest {
+  ray.common.WorkerId worker_id = 1;
+  string disconnect_reason = 2;
+}
+
+message UnregisterWorkerReply {
+  bool success = 1;
+}
+
+// ──────────────────────────────────────────────
+//  Object location messages
+// ──────────────────────────────────────────────
+
+message WaitForObjectRequest {
+  ray.common.ObjectId object_id = 1;
+  int64 timeout_ms = 2;
+}
+
+message WaitForObjectReply {
+  bool ready = 1;
+  ray.common.NodeId location_node_id = 2;
+}
+
+message GetObjectLocationsRequest {
+  repeated ray.common.ObjectId object_ids = 1;
+}
+
+message ObjectLocation {
+  ray.common.ObjectId object_id = 1;
+  repeated ray.common.NodeId node_ids = 2;
+  int64 object_size = 3;
+}
+
+message GetObjectLocationsReply {
+  repeated ObjectLocation locations = 1;
+}
+
+// ──────────────────────────────────────────────
+//  Inter-raylet messages
+// ──────────────────────────────────────────────
+
+message TransferObjectRequest {
+  ray.common.ObjectId object_id = 1;
+  ray.common.NodeId target_node_id = 2;
+}
+
+message TransferObjectReply {
+  bool success = 1;
+}
+
+message RequestWorkerLeaseRequest {
+  ray.common.Resources required_resources = 1;
+  ray.common.NodeId preferred_node_id = 2; // Soft affinity
+}
+
+message RequestWorkerLeaseReply {
+  bool fulfilled = 1;
+  ray.common.Address worker_address = 2;
+  ray.common.NodeId node_id = 3;
+}
+
+message ReleaseWorkerLeaseRequest {
+  ray.common.Address worker_address = 1;
+}
+
+message ReleaseWorkerLeaseReply {
+  bool success = 1;
+}

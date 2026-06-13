@@ -1,0 +1,189 @@
+syntax = "proto3";
+
+package ray.object_store;
+
+import "common.proto";
+
+// ──────────────────────────────────────────────
+//  Object Store (Plasma replacement) Service
+// ──────────────────────────────────────────────
+
+/// Manages distributed immutable objects across the cluster.
+/// Replaces the C++ Plasma store with a Rust implementation
+/// backed by shared memory (mmap) for zero-copy reads.
+service ObjectStoreService {
+  // ── Object lifecycle ──
+  rpc Put(PutRequest) returns (PutReply);
+  rpc Get(GetRequest) returns (GetReply);
+  rpc Delete(DeleteRequest) returns (DeleteReply);
+  rpc Contains(ContainsRequest) returns (ContainsReply);
+
+  // ── Batch operations ──
+  rpc BatchGet(BatchGetRequest) returns (BatchGetReply);
+  rpc BatchPut(BatchPutRequest) returns (BatchPutReply);
+
+  // ── Object info ──
+  rpc GetObjectInfo(GetObjectInfoRequest) returns (GetObjectInfoReply);
+  rpc Wait(WaitRequest) returns (WaitReply);
+
+  // ── Spilling ──
+  rpc SpillObjects(SpillObjectsRequest) returns (SpillObjectsReply);
+  rpc RestoreObjects(RestoreObjectsRequest) returns (RestoreObjectsReply);
+
+  // ── Reference counting ──
+  rpc AddReference(AddReferenceRequest) returns (AddReferenceReply);
+  rpc RemoveReference(RemoveReferenceRequest) returns (RemoveReferenceReply);
+}
+
+// ──────────────────────────────────────────────
+//  Object data messages
+// ──────────────────────────────────────────────
+
+/// Metadata stored alongside each object.
+message ObjectMetadata {
+  ray.common.ObjectId object_id = 1;
+  int64 data_size = 2;
+  int64 metadata_size = 3;
+  int64 total_size = 4;
+  int32 ref_count = 5;
+  bool is_spilled = 6;
+  string spill_url = 7;
+  int64 create_time_ms = 8;
+}
+
+/// Object data for inline transfer (small objects).
+/// Large objects use shared memory / direct transfer.
+message ObjectData {
+  ray.common.ObjectId object_id = 1;
+  bytes data = 2;
+  bytes metadata = 3;
+}
+
+// ──────────────────────────────────────────────
+//  CRUD messages
+// ──────────────────────────────────────────────
+
+message PutRequest { ObjectData object_data = 1; }
+message PutReply {
+  bool success = 1;
+  string error_message = 2;
+}
+
+message GetRequest {
+  ray.common.ObjectId object_id = 1;
+  int64 timeout_ms = 2;
+}
+
+message GetReply {
+  bool found = 1;
+  ObjectData object_data = 2;
+  string error_message = 3;
+}
+
+message DeleteRequest {
+  repeated ray.common.ObjectId object_ids = 1;
+  bool force = 2;
+}
+
+message DeleteReply {
+  int32 num_deleted = 1;
+}
+
+message ContainsRequest {
+  ray.common.ObjectId object_id = 1;
+}
+
+message ContainsReply {
+  bool exists = 1;
+}
+
+// ──────────────────────────────────────────────
+//  Batch messages
+// ──────────────────────────────────────────────
+
+message BatchGetRequest {
+  repeated ray.common.ObjectId object_ids = 1;
+  int64 timeout_ms = 2;
+}
+
+message BatchGetReply {
+  repeated ObjectData results = 1;
+  repeated bool found_flags = 2; // Parallel to object_ids
+}
+
+message BatchPutRequest {
+  repeated ObjectData object_data_list = 1;
+}
+
+message BatchPutReply {
+  int32 num_succeeded = 1;
+  repeated string error_messages = 2;
+}
+
+// ──────────────────────────────────────────────
+//  Info / Wait messages
+// ──────────────────────────────────────────────
+
+message GetObjectInfoRequest {
+  ray.common.ObjectId object_id = 1;
+}
+
+message GetObjectInfoReply {
+  bool found = 1;
+  ObjectMetadata metadata = 2;
+}
+
+message WaitRequest {
+  repeated ray.common.ObjectId object_ids = 1;
+  int32 num_ready = 2;    // Wait for at least this many
+  int64 timeout_ms = 3;
+}
+
+message WaitReply {
+  repeated bool ready_flags = 1; // Parallel to object_ids
+  int32 num_ready = 2;
+}
+
+// ──────────────────────────────────────────────
+//  Spill / Restore messages
+// ──────────────────────────────────────────────
+
+message SpillObjectsRequest {
+  repeated ray.common.ObjectId object_ids = 1;
+  string storage_url = 2; // e.g., "s3://bucket/path" or "file:///tmp/spill"
+}
+
+message SpillObjectsReply {
+  int32 num_spilled = 1;
+  repeated string error_messages = 2;
+}
+
+message RestoreObjectsRequest {
+  repeated ray.common.ObjectId object_ids = 1;
+}
+
+message RestoreObjectsReply {
+  int32 num_restored = 1;
+}
+
+// ──────────────────────────────────────────────
+//  Reference counting messages
+// ──────────────────────────────────────────────
+
+message AddReferenceRequest {
+  ray.common.ObjectId object_id = 1;
+  ray.common.Address owner_address = 2;
+}
+
+message AddReferenceReply {
+  bool success = 1;
+}
+
+message RemoveReferenceRequest {
+  ray.common.ObjectId object_id = 1;
+}
+
+message RemoveReferenceReply {
+  bool success = 1;
+  bool evicted = 2; // True if object was evicted due to zero refs
+}

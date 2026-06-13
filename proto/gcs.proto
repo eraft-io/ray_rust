@@ -1,0 +1,134 @@
+syntax = "proto3";
+
+package ray.gcs;
+
+import "common.proto";
+
+// ──────────────────────────────────────────────
+//  GCS (Global Control Store) Service
+// ──────────────────────────────────────────────
+
+/// GCS is the central metadata store for the cluster.
+/// It manages node membership, actor registry, job info, and resource state.
+service GcsService {
+  // ── Node management ──
+  rpc RegisterNode(RegisterNodeRequest) returns (RegisterNodeReply);
+  rpc UnregisterNode(UnregisterNodeRequest) returns (UnregisterNodeReply);
+  rpc GetAllNodeInfo(GetAllNodeInfoRequest) returns (GetAllNodeInfoReply);
+  rpc ReportNodeHeartbeat(NodeHeartbeatRequest) returns (NodeHeartbeatReply);
+
+  // ── Actor management ──
+  rpc RegisterActor(RegisterActorRequest) returns (RegisterActorReply);
+  rpc GetActorInfo(GetActorInfoRequest) returns (GetActorInfoReply);
+  rpc GetAllActorInfo(GetAllActorInfoRequest) returns (GetAllActorInfoReply);
+  rpc KillActor(KillActorRequest) returns (KillActorReply);
+
+  // ── Job management ──
+  rpc AddJob(AddJobRequest) returns (AddJobReply);
+  rpc MarkJobFinished(MarkJobFinishedRequest) returns (MarkJobFinishedReply);
+  rpc GetAllJobInfo(GetAllJobInfoRequest) returns (GetAllJobInfoReply);
+
+  // ── Resource management ──
+  rpc ReportResourceUsage(ReportResourceUsageRequest) returns (ReportResourceUsageReply);
+  rpc GetAllResourceUsage(GetAllResourceUsageRequest) returns (GetAllResourceUsageReply);
+}
+
+// ──────────────────────────────────────────────
+//  Node messages
+// ──────────────────────────────────────────────
+
+message NodeInfo {
+  ray.common.NodeId node_id = 1;
+  string node_manager_address = 2;
+  int32 node_manager_port = 3;
+  ray.common.Resources total_resources = 4;
+  ray.common.Resources available_resources = 5;
+  bool is_alive = 6;
+  int64 start_time_ms = 7;
+  map<string, string> labels = 8;
+}
+
+message RegisterNodeRequest { NodeInfo node_info = 1; }
+message RegisterNodeReply { bool success = 1; string message = 2; }
+
+message UnregisterNodeRequest { ray.common.NodeId node_id = 1; }
+message UnregisterNodeReply { bool success = 1; }
+
+message GetAllNodeInfoRequest {}
+message GetAllNodeInfoReply { repeated NodeInfo node_info_list = 1; }
+
+message NodeHeartbeatRequest {
+  ray.common.NodeId node_id = 1;
+  ray.common.Resources available_resources = 2;
+  int64 timestamp_ms = 3;
+}
+message NodeHeartbeatReply { bool is_draining = 1; }
+
+// ──────────────────────────────────────────────
+//  Actor messages
+// ──────────────────────────────────────────────
+
+message ActorInfo {
+  ray.common.ActorId actor_id = 1;
+  ray.common.JobId job_id = 2;
+  string class_name = 3;
+  ray.common.ActorState state = 4;
+  ray.common.Address address = 5;
+  ray.common.NodeId node_id = 6;
+  int64 start_time_ms = 7;
+  int64 end_time_ms = 8;
+  int32 num_restarts = 9;
+}
+
+message RegisterActorRequest { ray.common.ActorSpec actor_spec = 1; }
+message RegisterActorReply { bool success = 1; ray.common.ActorId actor_id = 2; }
+
+message GetActorInfoRequest { ray.common.ActorId actor_id = 1; }
+message GetActorInfoReply { ActorInfo actor_info = 1; }
+
+message GetAllActorInfoRequest {
+  ray.common.JobId job_id = 1; // Optional filter
+}
+message GetAllActorInfoReply { repeated ActorInfo actor_info_list = 1; }
+
+message KillActorRequest { ray.common.ActorId actor_id = 1; bool force_kill = 2; }
+message KillActorReply { bool success = 1; }
+
+// ──────────────────────────────────────────────
+//  Job messages
+// ──────────────────────────────────────────────
+
+message JobInfo {
+  ray.common.JobId job_id = 1;
+  string driver_ip = 2;
+  int64 start_time_ms = 3;
+  int64 end_time_ms = 4;
+  bool is_dead = 5;
+  map<string, string> config = 6;
+}
+
+message AddJobRequest { JobInfo job_info = 1; }
+message AddJobReply { bool success = 1; }
+
+message MarkJobFinishedRequest { ray.common.JobId job_id = 1; }
+message MarkJobFinishedReply { bool success = 1; }
+
+message GetAllJobInfoRequest {}
+message GetAllJobInfoReply { repeated JobInfo job_info_list = 1; }
+
+// ──────────────────────────────────────────────
+//  Resource messages
+// ──────────────────────────────────────────────
+
+message ResourceUsage {
+  ray.common.NodeId node_id = 1;
+  ray.common.Resources available = 2;
+  ray.common.Resources total = 3;
+  int64 timestamp_ms = 4;
+}
+
+message ReportResourceUsageRequest { ResourceUsage usage = 1; }
+message ReportResourceUsageReply {}
+
+message GetAllResourceUsageRequest {}
+message GetAllResourceUsageReply { repeated ResourceUsage usage_list = 1; }
