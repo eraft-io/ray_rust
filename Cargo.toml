@@ -7,7 +7,7 @@ members = [
     "crates/ray-object-store",
     "crates/ray-scheduler",
     "crates/ray-runtime",
-    # "crates/ray-py",  # Requires Python dev headers; build with `maturin develop -m crates/ray-py/Cargo.toml`
+    "crates/ray-py",
 ]
 
 # Include ray-py only when explicitly requested via `--workspace` or `-p ray-py`

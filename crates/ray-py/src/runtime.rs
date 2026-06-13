@@ -77,7 +77,7 @@ pub fn ray_rust(m: &Bound<'_, PyModule>) -> PyResult<()> {
 /// ray_rust.init(address="auto", num_cpus=4)
 /// ```
 #[pyfunction]
-#[pyo3(signature = (address="auto", num_cpus=None))]
+#[pyo3(name = "init", signature = (address="auto", num_cpus=None))]
 fn py_init(address: &str, num_cpus: Option<usize>) -> PyResult<()> {
     if INITIALIZED.load(std::sync::atomic::Ordering::SeqCst) {
         return Ok(());
@@ -115,6 +115,7 @@ fn py_init(address: &str, num_cpus: Option<usize>) -> PyResult<()> {
 /// ray_rust.shutdown()
 /// ```
 #[pyfunction]
+#[pyo3(name = "shutdown")]
 fn py_shutdown() -> PyResult<()> {
     tracing::info!("Shutting down Ray Rust runtime");
     INITIALIZED.store(false, std::sync::atomic::Ordering::SeqCst);
@@ -129,6 +130,7 @@ fn py_shutdown() -> PyResult<()> {
 /// is_init = ray_rust.is_initialized()
 /// ```
 #[pyfunction]
+#[pyo3(name = "is_initialized")]
 fn py_is_initialized() -> PyResult<bool> {
     Ok(INITIALIZED.load(std::sync::atomic::Ordering::SeqCst))
 }
@@ -141,6 +143,7 @@ fn py_is_initialized() -> PyResult<bool> {
 /// ref = ray_rust.put(b"serialized_data")
 /// ```
 #[pyfunction]
+#[pyo3(name = "put")]
 fn py_put(_py: Python<'_>, data: &[u8]) -> PyResult<PyObjectRef> {
     let rt = get_runtime()?;
     let store = get_object_store()?;
@@ -166,7 +169,7 @@ fn py_put(_py: Python<'_>, data: &[u8]) -> PyResult<PyObjectRef> {
 /// data = ray_rust.get(ref, timeout_ms=10000)
 /// ```
 #[pyfunction]
-#[pyo3(signature = (object_ref, timeout_ms=10000))]
+#[pyo3(name = "get", signature = (object_ref, timeout_ms=10000))]
 fn py_get(_py: Python<'_>, object_ref: &PyObjectRef, timeout_ms: i64) -> PyResult<Vec<u8>> {
     let rt = get_runtime()?;
     let store = get_object_store()?;
@@ -187,7 +190,7 @@ fn py_get(_py: Python<'_>, object_ref: &PyObjectRef, timeout_ms: i64) -> PyResul
 /// ready, not_ready = ray_rust.wait([ref1, ref2], num_returns=1, timeout_ms=5000)
 /// ```
 #[pyfunction]
-#[pyo3(signature = (object_refs, num_returns=1, timeout_ms=5000))]
+#[pyo3(name = "wait", signature = (object_refs, num_returns=1, timeout_ms=5000))]
 fn py_wait(
     _py: Python<'_>,
     object_refs: Vec<PyObjectRef>,

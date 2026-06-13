@@ -13,6 +13,7 @@ ray-gcs = { workspace = true }
 ray-raylet = { workspace = true }
 ray-object-store = { workspace = true }
 ray-scheduler = { workspace = true }
+ray-runtime = { workspace = true }
 pyo3 = { workspace = true }
 tokio = { workspace = true }
 tracing = { workspace = true }
