@@ -72,6 +72,11 @@ ray_rust/
     │       ├── global.rs          #   GlobalScheduler (集群节点视图 + 调度决策)
     │       └── policy.rs          #   SchedulingPolicy trait + Spread/Pack 策略
     │
+    ├── ray-runtime/               # Local Runtime — 单机本地运行时
+    │   ├── Cargo.toml
+    │   └── src/
+    │       └── lib.rs             #   LocalRuntime (GCS+Scheduler+Store+Worker 一体化)
+    │
     └── ray-py/                    # Python Bindings — PyO3 绑定入口
         └── src/
             ├── lib.rs             #   模块入口 (re-export pymodule)
@@ -184,6 +189,14 @@ ray_rust.shutdown()
 - **GlobalScheduler**：维护集群节点视图，根据策略选择执行节点
 - **SchedulingPolicy**：可插拔策略 trait，内置 `SpreadPolicy`（负载均衡）和 `PackPolicy`（资源紧凑）
 
+### `ray-runtime` — 单机本地运行时
+
+将所有组件组装为单进程运行时，无需启动任何 gRPC 服务器：
+
+- **LocalRuntime**：一键初始化 GCS + Scheduler + ObjectStore + WorkerPool
+- 支持注册自定义函数 (`register_function`)、提交任务 (`submit_fn`)、获取结果 (`get_object`)
+- 提供 `put_object` / `cancel_task` / `get_task_status` 等完整 API
+
 ### `ray-py` — Python 绑定
 
 通过 PyO3 暴露 Rust Core 给 Python：
@@ -202,6 +215,92 @@ ray_rust.shutdown()
 | `gcs.proto` | `ray.gcs` | `GcsService` (14 个 RPC) |
 | `raylet.proto` | `ray.raylet` | `RayletService` (11 个 RPC) |
 | `object_store.proto` | `ray.object_store` | `ObjectStoreService` (12 个 RPC) |
+
+## 本地运行 Demo
+
+### 运行内置示例
+
+```bash
+# 一键运行本地运行时 Demo
+cargo run -p ray-runtime --example local_demo
+```
+
+### 代码示例
+
+在 Rust 项目中直接使用 `ray-runtime` crate 运行本地任务：
+
+```bash
+# 在 Cargo.toml 中添加依赖
+# ray-runtime = { path = "crates/ray-runtime" }
+```
+
+```rust
+use ray_core::error::RayResult;
+use ray_runtime::{LocalRuntime, RuntimeConfig};
+use std::sync::Arc;
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // 1. 创建本地运行时（4 CPU, 8 workers）
+    let runtime = LocalRuntime::new(RuntimeConfig {
+        num_cpus: 4,
+        max_workers: 8,
+        object_store_memory: 0, // 0 = 不限制内存
+    })?;
+
+    // 2. 注册一个函数：将 payload 中每个字节乘以 2
+    runtime
+        .register_function(
+            "double_bytes",
+            Arc::new(|payload: &[u8]| -> RayResult<Vec<u8>> {
+                Ok(payload.iter().map(|b| b.wrapping_mul(2)).collect())
+            }),
+        )
+        .await;
+
+    // 3. 提交一个对象到对象存储
+    let obj_id = runtime.put_object(vec![10, 20, 30]).await?;
+    let data = runtime.get_object(&obj_id, 1000).await?;
+    println!("Stored and retrieved: {:?}", data); // [10, 20, 30]
+
+    // 4. 提交一个任务并等待结果
+    let result_id = runtime.submit_fn("double_bytes", vec![1, 2, 3]).await?;
+    let result = runtime.get_object(&result_id, 5000).await?;
+    println!("Task result: {:?}", result); // [2, 4, 6]
+
+    // 5. 也可以并行提交多个任务
+    let mut result_ids = Vec::new();
+    for i in 0u8..4 {
+        let rid = runtime
+            .submit_fn("double_bytes", vec![i, i + 1, i + 2])
+            .await?;
+        result_ids.push((rid, i));
+    }
+
+    // 收集所有结果
+    for (rid, i) in result_ids {
+        let result = runtime.get_object(&rid, 5000).await?;
+        println!("Task {} result: {:?}", i, result);
+    }
+
+    // 6. 关闭运行时
+    runtime.shutdown().await;
+    Ok(())
+}
+```
+
+运行集成测试：
+
+```bash
+# 运行所有测试（包括集成测试）
+cargo test -p ray-runtime
+
+# 只运行集成测试
+cargo test -p ray-runtime --test integration_local_mode
+
+# 带日志查看详细执行过程
+RUST_LOG=debug cargo test -p ray-runtime --test integration_local_mode -- --nocapture
+```
 
 ## 开发指南
 

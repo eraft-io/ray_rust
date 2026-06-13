@@ -8,27 +8,28 @@
 //! - Communicates with other Raylets for distributed scheduling
 //!
 //! This crate provides:
-//! - Generated gRPC service stubs (from `raylet.proto` + `common.proto`)
+//! - Generated gRPC service stubs (from `raylet.proto`; common types from `ray-core`)
 //! - A `RayletServer` hosting the tonic gRPC service
 //! - `LocalScheduler` for resource-aware task scheduling on a single node
 //! - `ResourceManager` for tracking node-local resource allocation
 
+pub mod executor;
 pub mod resource_manager;
 pub mod scheduler;
 pub mod server;
+pub mod worker;
 
-// Include generated protobuf code
+// Include generated protobuf code (service-specific only; common types via ray_core::proto)
 #[allow(clippy::all)]
 #[allow(unused_imports)]
 pub mod proto {
-    pub mod common {
-        include!("ray.common.rs");
-    }
     pub mod raylet {
         include!("ray.raylet.rs");
     }
 }
 
+pub use executor::{FunctionRegistryExecutor, LocalExecutor, TaskExecutor};
 pub use resource_manager::ResourceManager;
 pub use scheduler::LocalScheduler;
 pub use server::RayletServer;
+pub use worker::{WorkerHandle, WorkerPool};

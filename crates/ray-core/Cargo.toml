@@ -13,3 +13,9 @@ anyhow = { workspace = true }
 uuid = { workspace = true }
 async-trait = { workspace = true }
 tracing = { workspace = true }
+prost = { workspace = true }
+prost-types = { workspace = true }
+
+[build-dependencies]
+tonic-build = { workspace = true }
+protox = { workspace = true }

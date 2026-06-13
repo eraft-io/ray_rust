@@ -7,20 +7,17 @@
 //! - Global resource usage tracking
 //!
 //! This crate provides:
-//! - Generated gRPC service stubs (from `gcs.proto` + `common.proto`)
+//! - Generated gRPC service stubs (from `gcs.proto`; common types from `ray-core`)
 //! - An in-memory `GcsStore` implementation
 //! - A `GcsServer` that hosts the tonic gRPC service
 
 pub mod server;
 pub mod store;
 
-// Include generated protobuf code
+// Include generated protobuf code (service-specific only; common types via ray_core::proto)
 #[allow(clippy::all)]
 #[allow(unused_imports)]
 pub mod proto {
-    pub mod common {
-        include!("ray.common.rs");
-    }
     pub mod gcs {
         include!("ray.gcs.rs");
     }

@@ -1,25 +1,25 @@
 //! Build script for `ray-gcs`.
 //!
-//! Compiles the `gcs.proto` and `common.proto` files using `protox`
-//! (a pure-Rust protobuf parser that doesn't require `protoc` to be installed).
+//! Only compiles `gcs.proto`; `common.proto` is resolved for imports
+//! but not compiled — its types come from `ray_core::proto::common`
+//! via the `extern_path` directive.
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let proto_dir = "../../proto";
-    let proto_files = &["../../proto/gcs.proto", "../../proto/common.proto"];
+    // Only compile the service proto; common.proto is resolved via include path
+    let proto_files = &["../../proto/gcs.proto"];
 
-    // Use protox as the protobuf parser (no protoc binary required)
     let file_descriptor_set = protox::compile(proto_files, &[proto_dir])?;
 
     tonic_build::configure()
         .build_server(true)
         .build_client(true)
+        .extern_path(".ray.common", "ray_core::proto::common")
         .out_dir("src/")
         .compile_fds(file_descriptor_set)?;
 
-    // Re-run if proto files change
-    for proto_file in proto_files {
-        println!("cargo:rerun-if-changed={}", proto_file);
-    }
+    println!("cargo:rerun-if-changed=../../proto/gcs.proto");
+    println!("cargo:rerun-if-changed=../../proto/common.proto");
 
     Ok(())
 }

@@ -7,6 +7,7 @@ use crate::proto::gcs::gcs_service_server::{GcsService, GcsServiceServer};
 use crate::proto::gcs::*;
 use ray_core::error::RayResult;
 use ray_core::id::*;
+use ray_core::proto_conv;
 use ray_core::traits::GcsStore;
 use std::sync::Arc;
 use tonic::{Request, Response, Status};
@@ -47,17 +48,11 @@ impl<S: GcsStore + 'static> GcsService for GcsServer<S> {
             .ok_or_else(|| Status::invalid_argument("node_info is required"))?;
 
         let core_node = ray_core::traits::NodeInfo {
-            node_id: NodeId::from_vec(
-                &node_info
-                    .node_id
-                    .as_ref()
-                    .map(|n| n.id.clone())
-                    .unwrap_or_default(),
-            ),
-            address: node_info.node_manager_address.clone(),
+            node_id: proto_conv::id_from_option(node_info.node_id),
+            address: node_info.node_manager_address,
             port: node_info.node_manager_port,
-            total_resources: ray_core::Resources::new(), // TODO: convert from proto
-            available_resources: ray_core::Resources::new(),
+            total_resources: proto_conv::resources_from_option(node_info.total_resources.as_ref()),
+            available_resources: proto_conv::resources_from_option(node_info.available_resources.as_ref()),
             is_alive: true,
         };
 
@@ -80,7 +75,7 @@ impl<S: GcsStore + 'static> GcsService for GcsServer<S> {
         let node_id = req
             .node_id
             .ok_or_else(|| Status::invalid_argument("node_id is required"))?;
-        let id = NodeId::from_vec(&node_id.id);
+        let id: NodeId = node_id.into();
 
         self.store
             .unregister_node(&id)
@@ -102,14 +97,17 @@ impl<S: GcsStore + 'static> GcsService for GcsServer<S> {
 
         let node_info_list = nodes
             .into_iter()
-            .map(|n| crate::proto::gcs::NodeInfo {
-                node_id: Some(crate::proto::common::NodeId {
-                    id: n.node_id.to_vec(),
-                }),
-                node_manager_address: n.address,
-                node_manager_port: n.port,
-                is_alive: n.is_alive,
-                ..Default::default()
+            .map(|n| {
+                let fields = proto_conv::node_info_to_proto_fields(&n);
+                NodeInfo {
+                    node_id: fields.node_id,
+                    node_manager_address: fields.address,
+                    node_manager_port: fields.port,
+                    total_resources: fields.total_resources,
+                    available_resources: fields.available_resources,
+                    is_alive: fields.is_alive,
+                    ..Default::default()
+                }
             })
             .collect();
 
@@ -120,8 +118,20 @@ impl<S: GcsStore + 'static> GcsService for GcsServer<S> {
         &self,
         request: Request<NodeHeartbeatRequest>,
     ) -> Result<Response<NodeHeartbeatReply>, Status> {
-        let _req = request.into_inner();
-        // TODO: Update node heartbeat timestamp and available resources
+        let req = request.into_inner();
+        // Update available resources for the node
+        if let Some(node_id_proto) = req.node_id {
+            let node_id: NodeId = node_id_proto.into();
+            if let Some(avail) = req.available_resources {
+                let resources = proto_conv::resources_from_proto(&avail);
+                // Update the node's available resources in the store
+                let mut nodes = self.store.get_all_nodes().await.unwrap_or_default();
+                if let Some(node) = nodes.iter_mut().find(|n| n.node_id == node_id) {
+                    node.available_resources = resources;
+                    let _ = self.store.register_node(node.clone()).await;
+                }
+            }
+        }
         Ok(Response::new(NodeHeartbeatReply {
             is_draining: false,
         }))
@@ -134,17 +144,22 @@ impl<S: GcsStore + 'static> GcsService for GcsServer<S> {
         request: Request<RegisterActorRequest>,
     ) -> Result<Response<RegisterActorReply>, Status> {
         let req = request.into_inner();
-        let _spec = req
+        let spec = req
             .actor_spec
             .ok_or_else(|| Status::invalid_argument("actor_spec is required"))?;
 
-        // TODO: Convert proto ActorSpec to core ActorSpec and register
-        let actor_id = ActorId::new();
+        let core_spec = proto_conv::actor_spec_from_proto(&spec)
+            .map_err(|e| Status::invalid_argument(e.to_string()))?;
+        let actor_id = core_spec.actor_id.clone();
+
+        self.store
+            .register_actor(core_spec)
+            .await
+            .map_err(|e| Status::internal(e.to_string()))?;
+
         Ok(Response::new(RegisterActorReply {
             success: true,
-            actor_id: Some(crate::proto::common::ActorId {
-                id: actor_id.to_vec(),
-            }),
+            actor_id: Some(actor_id.into()),
         }))
     }
 
@@ -156,7 +171,7 @@ impl<S: GcsStore + 'static> GcsService for GcsServer<S> {
         let actor_id = req
             .actor_id
             .ok_or_else(|| Status::invalid_argument("actor_id is required"))?;
-        let id = ActorId::from_vec(&actor_id.id);
+        let id: ActorId = actor_id.into();
 
         let actor_info = self
             .store
@@ -165,15 +180,20 @@ impl<S: GcsStore + 'static> GcsService for GcsServer<S> {
             .map_err(|e| Status::internal(e.to_string()))?;
 
         match actor_info {
-            Some(info) => Ok(Response::new(GetActorInfoReply {
-                actor_info: Some(crate::proto::gcs::ActorInfo {
-                    actor_id: Some(crate::proto::common::ActorId {
-                        id: info.actor_id.to_vec(),
+            Some(info) => {
+                let fields = proto_conv::actor_info_to_proto_fields(&info);
+                Ok(Response::new(GetActorInfoReply {
+                    actor_info: Some(ActorInfo {
+                        actor_id: fields.actor_id,
+                        job_id: fields.job_id,
+                        class_name: fields.class_name,
+                        state: fields.state,
+                        node_id: fields.node_id,
+                        num_restarts: fields.num_restarts,
+                        ..Default::default()
                     }),
-                    class_name: info.class_name,
-                    ..Default::default()
-                }),
-            })),
+                }))
+            }
             None => Err(Status::not_found("Actor not found")),
         }
     }
@@ -183,7 +203,7 @@ impl<S: GcsStore + 'static> GcsService for GcsServer<S> {
         request: Request<GetAllActorInfoRequest>,
     ) -> Result<Response<GetAllActorInfoReply>, Status> {
         let req = request.into_inner();
-        let job_id = req.job_id.map(|j| JobId::from_vec(&j.id));
+        let job_id = req.job_id.map(|j| -> JobId { j.into() });
 
         let actors = self
             .store
@@ -193,12 +213,17 @@ impl<S: GcsStore + 'static> GcsService for GcsServer<S> {
 
         let actor_info_list = actors
             .into_iter()
-            .map(|a| crate::proto::gcs::ActorInfo {
-                actor_id: Some(crate::proto::common::ActorId {
-                    id: a.actor_id.to_vec(),
-                }),
-                class_name: a.class_name,
-                ..Default::default()
+            .map(|a| {
+                let fields = proto_conv::actor_info_to_proto_fields(&a);
+                ActorInfo {
+                    actor_id: fields.actor_id,
+                    job_id: fields.job_id,
+                    class_name: fields.class_name,
+                    state: fields.state,
+                    node_id: fields.node_id,
+                    num_restarts: fields.num_restarts,
+                    ..Default::default()
+                }
             })
             .collect();
 
@@ -213,7 +238,7 @@ impl<S: GcsStore + 'static> GcsService for GcsServer<S> {
         let actor_id = req
             .actor_id
             .ok_or_else(|| Status::invalid_argument("actor_id is required"))?;
-        let id = ActorId::from_vec(&actor_id.id);
+        let id: ActorId = actor_id.into();
 
         self.store
             .kill_actor(&id)
@@ -229,8 +254,25 @@ impl<S: GcsStore + 'static> GcsService for GcsServer<S> {
         &self,
         request: Request<AddJobRequest>,
     ) -> Result<Response<AddJobReply>, Status> {
-        let _req = request.into_inner();
-        // TODO: Register job in store
+        let req = request.into_inner();
+        let job_info = req
+            .job_info
+            .ok_or_else(|| Status::invalid_argument("job_info is required"))?;
+
+        let core_job = ray_core::traits::JobInfo {
+            job_id: proto_conv::id_from_option(job_info.job_id),
+            driver_ip: job_info.driver_ip,
+            start_time_ms: job_info.start_time_ms,
+            end_time_ms: job_info.end_time_ms,
+            is_dead: job_info.is_dead,
+            config: job_info.config,
+        };
+
+        self.store
+            .add_job(core_job)
+            .await
+            .map_err(|e| Status::internal(e.to_string()))?;
+
         Ok(Response::new(AddJobReply { success: true }))
     }
 
@@ -238,8 +280,17 @@ impl<S: GcsStore + 'static> GcsService for GcsServer<S> {
         &self,
         request: Request<MarkJobFinishedRequest>,
     ) -> Result<Response<MarkJobFinishedReply>, Status> {
-        let _req = request.into_inner();
-        // TODO: Mark job as finished in store
+        let req = request.into_inner();
+        let job_id = req
+            .job_id
+            .ok_or_else(|| Status::invalid_argument("job_id is required"))?;
+        let id: JobId = job_id.into();
+
+        self.store
+            .mark_job_finished(&id)
+            .await
+            .map_err(|e| Status::internal(e.to_string()))?;
+
         Ok(Response::new(MarkJobFinishedReply { success: true }))
     }
 
@@ -247,10 +298,25 @@ impl<S: GcsStore + 'static> GcsService for GcsServer<S> {
         &self,
         _request: Request<GetAllJobInfoRequest>,
     ) -> Result<Response<GetAllJobInfoReply>, Status> {
-        // TODO: Return all jobs from store
-        Ok(Response::new(GetAllJobInfoReply {
-            job_info_list: vec![],
-        }))
+        let jobs = self
+            .store
+            .get_all_jobs()
+            .await
+            .map_err(|e| Status::internal(e.to_string()))?;
+
+        let job_info_list = jobs
+            .into_iter()
+            .map(|j| JobInfo {
+                job_id: proto_conv::id_to_option(j.job_id),
+                driver_ip: j.driver_ip,
+                start_time_ms: j.start_time_ms,
+                end_time_ms: j.end_time_ms,
+                is_dead: j.is_dead,
+                config: j.config,
+            })
+            .collect();
+
+        Ok(Response::new(GetAllJobInfoReply { job_info_list }))
     }
 
     // ── Resource management ──
@@ -259,8 +325,23 @@ impl<S: GcsStore + 'static> GcsService for GcsServer<S> {
         &self,
         request: Request<ReportResourceUsageRequest>,
     ) -> Result<Response<ReportResourceUsageReply>, Status> {
-        let _req = request.into_inner();
-        // TODO: Update resource usage for the node
+        let req = request.into_inner();
+        let usage = req
+            .usage
+            .ok_or_else(|| Status::invalid_argument("usage is required"))?;
+
+        let core_usage = ray_core::traits::ResourceUsageInfo {
+            node_id: proto_conv::id_from_option(usage.node_id),
+            available: proto_conv::resources_from_option(usage.available.as_ref()),
+            total: proto_conv::resources_from_option(usage.total.as_ref()),
+            timestamp_ms: usage.timestamp_ms,
+        };
+
+        self.store
+            .report_resource_usage(core_usage)
+            .await
+            .map_err(|e| Status::internal(e.to_string()))?;
+
         Ok(Response::new(ReportResourceUsageReply {}))
     }
 
@@ -268,9 +349,22 @@ impl<S: GcsStore + 'static> GcsService for GcsServer<S> {
         &self,
         _request: Request<GetAllResourceUsageRequest>,
     ) -> Result<Response<GetAllResourceUsageReply>, Status> {
-        // TODO: Return all resource usage
-        Ok(Response::new(GetAllResourceUsageReply {
-            usage_list: vec![],
-        }))
+        let usage_list = self
+            .store
+            .get_all_resource_usage()
+            .await
+            .map_err(|e| Status::internal(e.to_string()))?;
+
+        let usage_list = usage_list
+            .into_iter()
+            .map(|u| ResourceUsage {
+                node_id: proto_conv::id_to_option(u.node_id),
+                available: proto_conv::resources_to_option(&u.available),
+                total: proto_conv::resources_to_option(&u.total),
+                timestamp_ms: u.timestamp_ms,
+            })
+            .collect();
+
+        Ok(Response::new(GetAllResourceUsageReply { usage_list }))
     }
 }

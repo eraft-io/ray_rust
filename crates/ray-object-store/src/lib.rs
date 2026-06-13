@@ -11,13 +11,10 @@ pub mod server;
 pub mod shared_memory;
 pub mod store;
 
-// Include generated protobuf code
+// Include generated protobuf code (service-specific only; common types via ray_core::proto)
 #[allow(clippy::all)]
 #[allow(unused_imports)]
 pub mod proto {
-    pub mod common {
-        include!("ray.common.rs");
-    }
     pub mod object_store {
         include!("ray.object_store.rs");
     }

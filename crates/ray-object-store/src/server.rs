@@ -44,7 +44,7 @@ impl ObjectStoreService for ObjectStoreServer {
         let object_id = obj
             .object_id
             .ok_or_else(|| Status::invalid_argument("object_id is required"))?;
-        let id = ObjectId::from_vec(&object_id.id);
+        let id: ObjectId = object_id.into();
 
         self.store
             .put(id, obj.data)
@@ -62,7 +62,7 @@ impl ObjectStoreService for ObjectStoreServer {
         let object_id = req
             .object_id
             .ok_or_else(|| Status::invalid_argument("object_id is required"))?;
-        let id = ObjectId::from_vec(&object_id.id);
+        let id: ObjectId = object_id.clone().into();
 
         match self.store.get(&id, req.timeout_ms).await {
             Ok(data) => Ok(Response::new(GetReply {
@@ -89,7 +89,7 @@ impl ObjectStoreService for ObjectStoreServer {
         let req = request.into_inner();
         let mut num_deleted = 0;
         for obj_id in req.object_ids {
-            let id = ObjectId::from_vec(&obj_id.id);
+            let id: ObjectId = obj_id.into();
             if self.store.delete(&id).await.is_ok() {
                 num_deleted += 1;
             }
@@ -105,7 +105,7 @@ impl ObjectStoreService for ObjectStoreServer {
         let object_id = req
             .object_id
             .ok_or_else(|| Status::invalid_argument("object_id is required"))?;
-        let id = ObjectId::from_vec(&object_id.id);
+        let id: ObjectId = object_id.into();
 
         let exists = self
             .store
@@ -125,7 +125,7 @@ impl ObjectStoreService for ObjectStoreServer {
         let mut found_flags = Vec::new();
 
         for obj_id in &req.object_ids {
-            let id = ObjectId::from_vec(&obj_id.id);
+            let id: ObjectId = obj_id.clone().into();
             match self.store.get(&id, req.timeout_ms).await {
                 Ok(data) => {
                     results.push(ObjectData {
@@ -158,9 +158,8 @@ impl ObjectStoreService for ObjectStoreServer {
         for obj_data in req.object_data_list {
             let obj_id = obj_data
                 .object_id
-                .clone()
                 .ok_or_else(|| Status::invalid_argument("object_id required"))?;
-            let id = ObjectId::from_vec(&obj_id.id);
+            let id: ObjectId = obj_id.into();
 
             match self.store.put(id, obj_data.data).await {
                 Ok(()) => num_succeeded += 1,
@@ -182,18 +181,30 @@ impl ObjectStoreService for ObjectStoreServer {
         let object_id = req
             .object_id
             .ok_or_else(|| Status::invalid_argument("object_id is required"))?;
-        let id = ObjectId::from_vec(&object_id.id);
+        let id: ObjectId = object_id.clone().into();
 
-        let exists = self
-            .store
-            .contains(&id)
-            .await
-            .map_err(|e| Status::internal(e.to_string()))?;
-
-        Ok(Response::new(GetObjectInfoReply {
-            found: exists,
-            metadata: None, // TODO: Return full metadata
-        }))
+        match self.store.get_entry(&id) {
+            Some(entry) => {
+                let elapsed = entry.create_time.elapsed();
+                Ok(Response::new(GetObjectInfoReply {
+                    found: true,
+                    metadata: Some(ObjectMetadata {
+                        object_id: Some(object_id),
+                        data_size: entry.data.len() as i64,
+                        metadata_size: 0,
+                        total_size: entry.data.len() as i64,
+                        ref_count: entry.ref_count() as i32,
+                        is_spilled: entry.is_spilled,
+                        spill_url: entry.spill_url.clone().unwrap_or_default(),
+                        create_time_ms: elapsed.as_millis() as i64,
+                    }),
+                }))
+            }
+            None => Ok(Response::new(GetObjectInfoReply {
+                found: false,
+                metadata: None,
+            })),
+        }
     }
 
     async fn wait(&self, request: Request<WaitRequest>) -> Result<Response<WaitReply>, Status> {
@@ -201,7 +212,7 @@ impl ObjectStoreService for ObjectStoreServer {
         let object_ids: Vec<ObjectId> = req
             .object_ids
             .iter()
-            .map(|oid| ObjectId::from_vec(&oid.id))
+            .map(|oid| oid.clone().into())
             .collect();
 
         let ready_flags = self
@@ -222,11 +233,27 @@ impl ObjectStoreService for ObjectStoreServer {
         &self,
         request: Request<SpillObjectsRequest>,
     ) -> Result<Response<SpillObjectsReply>, Status> {
-        let _req = request.into_inner();
-        // TODO: Implement object spilling to disk / remote storage
+        let req = request.into_inner();
+        let storage_url = if req.storage_url.is_empty() {
+            "/tmp/ray_spill".to_string()
+        } else {
+            req.storage_url
+        };
+
+        let mut num_spilled = 0;
+        let mut error_messages = Vec::new();
+
+        for obj_id_proto in &req.object_ids {
+            let id: ObjectId = obj_id_proto.clone().into();
+            match self.store.spill_to_disk(&id, &storage_url).await {
+                Ok(()) => num_spilled += 1,
+                Err(e) => error_messages.push(e.to_string()),
+            }
+        }
+
         Ok(Response::new(SpillObjectsReply {
-            num_spilled: 0,
-            error_messages: vec![],
+            num_spilled,
+            error_messages,
         }))
     }
 
@@ -234,17 +261,30 @@ impl ObjectStoreService for ObjectStoreServer {
         &self,
         request: Request<RestoreObjectsRequest>,
     ) -> Result<Response<RestoreObjectsReply>, Status> {
-        let _req = request.into_inner();
-        // TODO: Implement object restoration from spill storage
-        Ok(Response::new(RestoreObjectsReply { num_restored: 0 }))
+        let req = request.into_inner();
+        let mut num_restored = 0;
+
+        for obj_id_proto in &req.object_ids {
+            let id: ObjectId = obj_id_proto.clone().into();
+            if self.store.restore_from_disk(&id).await.is_ok() {
+                num_restored += 1;
+            }
+        }
+
+        Ok(Response::new(RestoreObjectsReply { num_restored }))
     }
 
     async fn add_reference(
         &self,
         request: Request<AddReferenceRequest>,
     ) -> Result<Response<AddReferenceReply>, Status> {
-        let _req = request.into_inner();
-        // TODO: Increment reference count
+        let req = request.into_inner();
+        let object_id = req
+            .object_id
+            .ok_or_else(|| Status::invalid_argument("object_id is required"))?;
+        let id: ObjectId = object_id.into();
+
+        self.store.add_reference(&id);
         Ok(Response::new(AddReferenceReply { success: true }))
     }
 
@@ -252,11 +292,16 @@ impl ObjectStoreService for ObjectStoreServer {
         &self,
         request: Request<RemoveReferenceRequest>,
     ) -> Result<Response<RemoveReferenceReply>, Status> {
-        let _req = request.into_inner();
-        // TODO: Decrement reference count, possibly evict
+        let req = request.into_inner();
+        let object_id = req
+            .object_id
+            .ok_or_else(|| Status::invalid_argument("object_id is required"))?;
+        let id: ObjectId = object_id.into();
+
+        let evicted = self.store.remove_reference(&id);
         Ok(Response::new(RemoveReferenceReply {
             success: true,
-            evicted: false,
+            evicted,
         }))
     }
 }

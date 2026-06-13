@@ -7,10 +7,10 @@
 use async_trait::async_trait;
 use ray_core::error::{RayError, RayResult};
 use ray_core::id::*;
-use ray_core::traits::{ActorInfo, ActorSpec, ActorState, GcsStore, NodeInfo};
+use ray_core::traits::{ActorInfo, ActorSpec, ActorState, GcsStore, JobInfo, NodeInfo, ResourceUsageInfo};
 use std::collections::HashMap;
 use std::sync::RwLock;
-use tracing::{info, warn};
+use tracing::{debug, info, warn};
 
 /// In-memory GCS store backed by `HashMap`s protected by `RwLock`.
 ///
@@ -19,6 +19,8 @@ use tracing::{info, warn};
 pub struct InMemoryGcsStore {
     nodes: RwLock<HashMap<NodeId, NodeInfo>>,
     actors: RwLock<HashMap<ActorId, ActorInfo>>,
+    jobs: RwLock<HashMap<JobId, JobInfo>>,
+    resource_usage: RwLock<HashMap<NodeId, ResourceUsageInfo>>,
 }
 
 impl InMemoryGcsStore {
@@ -26,6 +28,8 @@ impl InMemoryGcsStore {
         Self {
             nodes: RwLock::new(HashMap::new()),
             actors: RwLock::new(HashMap::new()),
+            jobs: RwLock::new(HashMap::new()),
+            resource_usage: RwLock::new(HashMap::new()),
         }
     }
 }
@@ -102,6 +106,49 @@ impl GcsStore for InMemoryGcsStore {
         } else {
             Err(RayError::ActorNotFound(format!("{:?}", actor_id)))
         }
+    }
+
+    // ── Job operations ──
+
+    async fn add_job(&self, job_info: JobInfo) -> RayResult<()> {
+        let job_id = job_info.job_id.clone();
+        info!(?job_id, "Registering job in GCS");
+        self.jobs.write().unwrap().insert(job_id, job_info);
+        Ok(())
+    }
+
+    async fn mark_job_finished(&self, job_id: &JobId) -> RayResult<()> {
+        info!(?job_id, "Marking job as finished");
+        let mut jobs = self.jobs.write().unwrap();
+        if let Some(job) = jobs.get_mut(job_id) {
+            job.is_dead = true;
+            job.end_time_ms = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_millis() as i64;
+            Ok(())
+        } else {
+            Err(RayError::Internal(format!("Job {:?} not found", job_id)))
+        }
+    }
+
+    async fn get_all_jobs(&self) -> RayResult<Vec<JobInfo>> {
+        let jobs = self.jobs.read().unwrap();
+        Ok(jobs.values().cloned().collect())
+    }
+
+    // ── Resource usage operations ──
+
+    async fn report_resource_usage(&self, usage: ResourceUsageInfo) -> RayResult<()> {
+        let node_id = usage.node_id.clone();
+        debug!(?node_id, "Updating resource usage");
+        self.resource_usage.write().unwrap().insert(node_id, usage);
+        Ok(())
+    }
+
+    async fn get_all_resource_usage(&self) -> RayResult<Vec<ResourceUsageInfo>> {
+        let usage = self.resource_usage.read().unwrap();
+        Ok(usage.values().cloned().collect())
     }
 }
 

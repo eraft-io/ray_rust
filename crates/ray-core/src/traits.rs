@@ -125,6 +125,26 @@ pub struct ActorInfo {
     pub num_restarts: i32,
 }
 
+/// Job information stored in GCS.
+#[derive(Debug, Clone)]
+pub struct JobInfo {
+    pub job_id: JobId,
+    pub driver_ip: String,
+    pub start_time_ms: i64,
+    pub end_time_ms: i64,
+    pub is_dead: bool,
+    pub config: std::collections::HashMap<String, String>,
+}
+
+/// Resource usage information for a node, stored in GCS.
+#[derive(Debug, Clone)]
+pub struct ResourceUsageInfo {
+    pub node_id: NodeId,
+    pub available: Resources,
+    pub total: Resources,
+    pub timestamp_ms: i64,
+}
+
 /// Trait for the Global Control Store backend.
 #[async_trait]
 pub trait GcsStore: Send + Sync {
@@ -138,4 +158,26 @@ pub trait GcsStore: Send + Sync {
     async fn get_actor(&self, actor_id: &ActorId) -> RayResult<Option<ActorInfo>>;
     async fn get_all_actors(&self, job_id: Option<&JobId>) -> RayResult<Vec<ActorInfo>>;
     async fn kill_actor(&self, actor_id: &ActorId) -> RayResult<()>;
+
+    // ── Job operations ──
+    async fn add_job(&self, job_info: JobInfo) -> RayResult<()> {
+        let _ = job_info;
+        Err(crate::error::RayError::Internal("add_job not implemented".into()))
+    }
+    async fn mark_job_finished(&self, job_id: &JobId) -> RayResult<()> {
+        let _ = job_id;
+        Err(crate::error::RayError::Internal("mark_job_finished not implemented".into()))
+    }
+    async fn get_all_jobs(&self) -> RayResult<Vec<JobInfo>> {
+        Err(crate::error::RayError::Internal("get_all_jobs not implemented".into()))
+    }
+
+    // ── Resource usage operations ──
+    async fn report_resource_usage(&self, usage: ResourceUsageInfo) -> RayResult<()> {
+        let _ = usage;
+        Err(crate::error::RayError::Internal("report_resource_usage not implemented".into()))
+    }
+    async fn get_all_resource_usage(&self) -> RayResult<Vec<ResourceUsageInfo>> {
+        Err(crate::error::RayError::Internal("get_all_resource_usage not implemented".into()))
+    }
 }

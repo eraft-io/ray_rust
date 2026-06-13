@@ -17,3 +17,6 @@ thiserror = { workspace = true }
 [build-dependencies]
 tonic-build = { workspace = true }
 protox = { workspace = true }
+
+[dev-dependencies]
+ray-object-store = { workspace = true }

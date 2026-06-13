@@ -6,6 +6,7 @@ members = [
     "crates/ray-raylet",
     "crates/ray-object-store",
     "crates/ray-scheduler",
+    "crates/ray-runtime",
     # "crates/ray-py",  # Requires Python dev headers; build with `maturin develop -m crates/ray-py/Cargo.toml`
 ]
 
@@ -16,6 +17,7 @@ default-members = [
     "crates/ray-raylet",
     "crates/ray-object-store",
     "crates/ray-scheduler",
+    "crates/ray-runtime",
 ]
 
 [workspace.package]
@@ -67,3 +69,4 @@ ray-gcs = { path = "crates/ray-gcs" }
 ray-raylet = { path = "crates/ray-raylet" }
 ray-object-store = { path = "crates/ray-object-store" }
 ray-scheduler = { path = "crates/ray-scheduler" }
+ray-runtime = { path = "crates/ray-runtime" }

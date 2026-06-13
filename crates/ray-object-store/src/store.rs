@@ -9,9 +9,10 @@ use ray_core::error::{RayError, RayResult};
 use ray_core::id::ObjectId;
 use ray_core::traits::ObjectStore;
 use std::collections::HashMap;
+use std::path::{Path, PathBuf};
 use std::sync::RwLock;
 use std::time::{Duration, Instant};
-use tracing::{debug, info};
+use tracing::{debug, info, warn};
 
 /// Metadata for a stored object.
 #[derive(Debug, Clone)]
@@ -22,6 +23,13 @@ pub struct ObjectEntry {
     pub ref_count: u32,
     pub is_spilled: bool,
     pub spill_url: Option<String>,
+}
+
+impl ObjectEntry {
+    /// Return current reference count.
+    pub fn ref_count(&self) -> u32 {
+        self.ref_count
+    }
 }
 
 /// In-memory object store.
@@ -69,6 +77,111 @@ impl InMemoryObjectStore {
             info!(evicted, "Evicted zero-ref objects");
         }
         evicted
+    }
+
+    /// Get a clone of an object entry (if it exists).
+    pub fn get_entry(&self, object_id: &ObjectId) -> Option<ObjectEntry> {
+        self.objects.read().unwrap().get(object_id).cloned()
+    }
+
+    /// Increment the reference count for an object.
+    pub fn add_reference(&self, object_id: &ObjectId) {
+        let mut objects = self.objects.write().unwrap();
+        if let Some(entry) = objects.get_mut(object_id) {
+            entry.ref_count += 1;
+            debug!(?object_id, new_count = entry.ref_count, "Reference added");
+        } else {
+            warn!(?object_id, "add_reference: object not found");
+        }
+    }
+
+    /// Decrement the reference count. Returns true if the object was evicted
+    /// (ref count reached zero and was removed).
+    pub fn remove_reference(&self, object_id: &ObjectId) -> bool {
+        let mut objects = self.objects.write().unwrap();
+        let should_remove = if let Some(entry) = objects.get_mut(object_id) {
+            entry.ref_count = entry.ref_count.saturating_sub(1);
+            debug!(?object_id, new_count = entry.ref_count, "Reference removed");
+            entry.ref_count == 0
+        } else {
+            false
+        };
+        if should_remove {
+            objects.remove(object_id);
+            info!(?object_id, "Object evicted (zero references)");
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Spill an object's data to disk at the given directory.
+    pub async fn spill_to_disk(&self, object_id: &ObjectId, dir: &str) -> RayResult<()> {
+        let data = {
+            let objects = self.objects.read().unwrap();
+            let entry = objects.get(object_id).ok_or_else(|| {
+                RayError::ObjectNotFound(format!("{:?}", object_id))
+            })?;
+            entry.data.clone()
+        };
+
+        let spill_dir = PathBuf::from(dir);
+        tokio::fs::create_dir_all(&spill_dir)
+            .await
+            .map_err(|e| RayError::Io(e))?;
+
+        let hex_id: String = object_id
+            .as_bytes()
+            .iter()
+            .map(|b| format!("{:02x}", b))
+            .collect();
+        let spill_path = spill_dir.join(format!("{}.bin", hex_id));
+
+        tokio::fs::write(&spill_path, &data)
+            .await
+            .map_err(|e| RayError::Io(e))?;
+
+        let mut objects = self.objects.write().unwrap();
+        if let Some(entry) = objects.get_mut(object_id) {
+            entry.is_spilled = true;
+            entry.spill_url = Some(spill_path.to_string_lossy().to_string());
+        }
+
+        info!(?object_id, path = %spill_path.display(), "Object spilled to disk");
+        Ok(())
+    }
+
+    /// Restore an object's data from a previously spilled disk file.
+    pub async fn restore_from_disk(&self, object_id: &ObjectId) -> RayResult<()> {
+        let spill_path = {
+            let objects = self.objects.read().unwrap();
+            let entry = objects.get(object_id).ok_or_else(|| {
+                RayError::ObjectNotFound(format!("{:?}", object_id))
+            })?;
+            entry.spill_url.clone().ok_or_else(|| {
+                RayError::ObjectNotFound(format!("{:?} not spilled", object_id))
+            })?
+        };
+
+        let path = Path::new(&spill_path);
+        let data = tokio::fs::read(path)
+            .await
+            .map_err(|e| RayError::Io(e))?;
+
+        {
+            let mut objects = self.objects.write().unwrap();
+            if let Some(entry) = objects.get_mut(object_id) {
+                entry.data = data;
+                entry.is_spilled = false;
+                entry.spill_url = None;
+            }
+        } // guard dropped before await
+
+        // Clean up the spill file
+        let _ = tokio::fs::remove_file(path).await;
+
+        info!(?object_id, "Object restored from disk");
+        Ok(())
     }
 }
 
@@ -204,5 +317,49 @@ mod tests {
         store.put(id.clone(), vec![1]).await.unwrap();
         store.delete(&id).await.unwrap();
         assert!(!store.contains(&id).await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn test_reference_counting() {
+        let store = InMemoryObjectStore::new(0);
+        let id = ObjectId::new();
+        store.put(id.clone(), vec![1, 2]).await.unwrap();
+
+        // Initial ref_count is 1 (set on put)
+        assert_eq!(store.get_entry(&id).unwrap().ref_count(), 1);
+
+        store.add_reference(&id);
+        assert_eq!(store.get_entry(&id).unwrap().ref_count(), 2);
+
+        // remove_reference decrements but doesn't evict when > 0
+        assert!(!store.remove_reference(&id));
+        assert_eq!(store.get_entry(&id).unwrap().ref_count(), 1);
+
+        // Last remove evicts
+        assert!(store.remove_reference(&id));
+        assert!(store.get_entry(&id).is_none());
+    }
+
+    #[tokio::test]
+    async fn test_spill_and_restore() {
+        let store = InMemoryObjectStore::new(0);
+        let id = ObjectId::new();
+        let data = vec![10, 20, 30, 40];
+        store.put(id.clone(), data.clone()).await.unwrap();
+
+        let spill_dir = std::env::temp_dir().join("ray_spill_test");
+        let spill_dir_str = spill_dir.to_str().unwrap();
+
+        store.spill_to_disk(&id, spill_dir_str).await.unwrap();
+        let entry = store.get_entry(&id).unwrap();
+        assert!(entry.is_spilled);
+
+        store.restore_from_disk(&id).await.unwrap();
+        let entry = store.get_entry(&id).unwrap();
+        assert!(!entry.is_spilled);
+        assert_eq!(entry.data, data);
+
+        // Clean up
+        let _ = std::fs::remove_dir_all(&spill_dir);
     }
 }
